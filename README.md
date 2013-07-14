@@ -45,3 +45,9 @@ to see some customizations.
 - Files that have dynamic content (i.e. content depending on other things than files, such as
   `Value`s), will not be regenerated automatically. This is a general problem with generator-based
   build systems. Delete the file if you want it to be regenerated.
+
+## TODO
+
+- Use the batching feature for SCons-generated files, when/if it is implemented in Ninja.
+  This allows to build all SCons-generated files in one SCons invocation, saving SCons startup
+  time for every file.

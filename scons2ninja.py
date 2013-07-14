@@ -6,18 +6,21 @@
 # scons2ninja: A script to create a Ninja build file from SCons.
 #
 # Copyright (c) 2013 Remko Tronçon
-# Licensed under the simplified BSD license.
+# Licensed under the MIT license.
 # See COPYING for details.
 #
 ################################################################################
 
-import re, os, glob, subprocess, sys
+import re, os, os.path, subprocess, sys, fnmatch
 
 ################################################################################
 # Helper methods & variables
 ################################################################################
       
 SCRIPT = sys.argv[0]
+SCONS_ARGS = ' '.join(sys.argv[1:])
+
+# TODO: Make this a tool-specific map
 BINARY_FLAGS = ["-framework", "-arch", "-x", "--output-format", "-isystem", "-include"]
 
 if sys.platform == 'win32' :
@@ -36,7 +39,7 @@ def is_list(l) :
   return type(l) is list
 
 def escape(s) :
-  return s.replace(' ', '$ ')
+  return s.replace(' ', '$ ').replace(':', '$:')
   
 def to_list(l) :
   if not l :
@@ -110,6 +113,21 @@ def get_built_libs(libs, libpaths, outputs) :
         result.append(lib_libpath)
   return result
 
+def parse_tool_command(line) :
+  command = line.split(' ')
+  flags = command[1:]
+  tool = os.path.splitext(os.path.basename(command[0]))[0]
+  if tool.startswith('clang++') or tool.startswith('g++') :
+    tool = "cxx"
+  elif tool.startswith('clang') or tool.startswith('gcc') :
+    tool = "cc"
+  if tool in ["cc", "cxx"] and not "-c" in flags :
+    tool = "glink"
+  tool = tool.replace('-qt4', '')
+  return tool, command, flags
+
+def rglob(pattern, root = '.') :
+  return [os.path.join(path, f) for path, dirs, files in os.walk(root) for f in fnmatch.filter(files, pattern)]
 
 ################################################################################
 # Helper for building Ninja files
@@ -182,7 +200,7 @@ class NinjaBuilder :
       return ' '.join([escape(x) for x in lst]) 
     if is_regexp(lst) :
       return ' '.join([escape(x) for x in self.targets if lst.match(x)])
-    return lst
+    return escape(lst)
   
   def get_flags_variable(self, flags_type, flags) :
     if len(flags) == 0 :
@@ -201,7 +219,7 @@ class NinjaBuilder :
 
 ninja_post = []
 scons_cmd = "scons"
-scons_dependencies = ['SConstruct'] + glob.glob('**/SConscript')
+scons_dependencies = ['SConstruct'] + rglob('SConscript')
 
 CONFIGURATION_FILE = '.scons2ninja.conf'
 execfile(CONFIGURATION_FILE)
@@ -227,6 +245,10 @@ if sys.platform == 'win32' :
     command = '$link $in $linkflags $libs /out:$out',
     description = 'LINK $out')
 
+  ninja.rule('link_mt',
+    command = '$link $in $linkflags $libs /out:$out ; $mt $mtflags',
+    description = 'LINK $out')
+
   ninja.rule('lib',
     command = '$lib $libflags /out:$out $in',
     description = 'AR $out')
@@ -240,7 +262,7 @@ if sys.platform == 'win32' :
   # Could implement it with a script, but for now, delete the file if
   # this problem occurs. I'll fix it if it occurs too much.
   ninja.rule('scons',
-    command = scons_cmd + " $out",
+    command = scons_cmd + " ${scons_args} $out",
     pool = 'scons_pool',
     description = 'GEN $out')
 
@@ -299,7 +321,7 @@ ninja.rule('ibtool',
   description = 'IBTOOL $out')
 
 ninja.rule('generator',
-  command = "python " + SCRIPT + " ${generator_args}",
+  command = "python " + SCRIPT + " ${scons_args}",
   pool = 'scons_pool',
   generator = '1',
   description = 'Regenerating build.ninja')
@@ -309,14 +331,14 @@ ninja.rule('generator',
 # Build Statements
 ################################################################################
 
-generator_args = ' '.join(sys.argv[1:])
-scons_generate_cmd = scons_cmd + " " + generator_args + " --tree=all,prune dump_trace=1"
+scons_generate_cmd = scons_cmd + " " + SCONS_ARGS + " --tree=all,prune dump_trace=1"
 #scons_generate_cmd = 'cmd /c type scons2ninja.in'
 #scons_generate_cmd = 'cat scons2ninja.in'
 
 # Pass 1: Parse dependencies (and prefilter some build rules)
 build_lines = []
 dependencies = {}
+mtflags = {}
 previous_file = None
 f = subprocess.Popen(scons_generate_cmd, stdout = subprocess.PIPE, stderr = subprocess.PIPE, shell=True)
 stage = 'preamble'
@@ -349,6 +371,13 @@ for line in f.stdout.readlines() :
       skip_nth_line = 2
     else :
       build_lines.append(line)
+
+      # Already detect targets that will need 'mt'
+      tool, _, flags = parse_tool_command(line)
+      if tool == 'mt' :
+        target = get_unary_flags("-outputresource:", flags)[0]
+        target = target[0:target.index(';')]
+        mtflags[target] = flags
 
   elif stage == "dependencies" :
     if not re.match('^[\s|]+\+\-', line) :
@@ -415,7 +444,7 @@ for line in build_lines :
 
   m = re.match('^Install directory: "(.*)" as "(.*)"', line)
   if m :
-    for source in glob.glob(m.group(1) + "/**") :
+    for source in rglob('*', m.group(1)) :
       if os.path.isdir(source) :
         continue
       target = os.path.join(m.group(2), os.path.relpath(source, m.group(1)))
@@ -423,16 +452,7 @@ for line in build_lines :
     continue
 
   # Tools
-  command = line.split(' ')
-  flags = command[1:]
-  tool = os.path.splitext(os.path.basename(command[0]))[0]
-  if tool in ["clang++", "g++"] :
-    tool = "cxx"
-  if tool in ["clang", "gcc"] :
-    tool = "cc"
-  if tool in ["cc", "cxx"] and not "-c" in flags :
-    tool = "glink"
-  tool = tool.replace('-qt4', '')
+  tool, command, flags = parse_tool_command(line)
   tools[tool] = command[0]
 
   ############################################################
@@ -482,18 +502,26 @@ for line in build_lines :
     ninja.build(out, 'lib', files, libflags = flags)
 
   elif tool == 'link':
-    objects, flags = partition(flags, lambda x: x.endswith('.obj'))
+    objects, flags = partition(flags, lambda x: x.endswith('.obj') or x.endswith('.res'))
     out, flags = extract_unary_flag("/out:", flags)
     libs, flags = partition(flags, lambda x: not x.startswith("/") and x.endswith(".lib"))
     libpaths = get_unary_flags("/libpath:", flags)
     deps = get_built_libs(libs, libpaths, ninja.targets)
-    ninja.build(out, 'link', objects, deps = sorted(deps), 
-      libs = libs, linkflags = flags)
+    if out in mtflags :
+      ninja.build(out, 'link_mt', objects, deps = sorted(deps), 
+        libs = libs, linkflags = flags, mtflags = mtflags[out])
+    else :
+      ninja.build(out, 'link', objects, deps = sorted(deps), 
+        libs = libs, linkflags = flags)
 
   elif tool == 'rc':
     out, flags = extract_unary_flag("/fo", flags)
     files, flags = extract_non_flags(flags)
     ninja.build(out, 'rc', files[0], order_deps = '_generated_headers', rcflags = flags)
+
+  elif tool == 'mt':
+    # Already handled
+    pass
 
   ############################################################
   # Qt tools
@@ -543,7 +571,7 @@ ninja.build('build.ninja', 'generator', [], deps = [SCRIPT, CONFIGURATION_FILE] 
 # Header & variables
 ninja.header("# This file is generated by " + SCRIPT)
 ninja.variable("ninja_required_version", "1.3")
-ninja.variable("generator_args", generator_args)
+ninja.variable("scons_args", SCONS_ARGS)
 for k, v in tools.iteritems() :
   ninja.variable(k, v)
 
