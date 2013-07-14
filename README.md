@@ -21,7 +21,7 @@ is fully printed.
 To generate the initial `build.ninja` file, run the following from the
 toplevel directory:
 
-    path/to/scons2ninja.rb <optional scons flags>
+    path/to/scons2ninja.py <optional scons flags>
 
 This will generate the `build.ninja` file for an equivalent SCons build with the given flags. 
 From then on, you can just type `ninja` to build.
@@ -40,6 +40,8 @@ to see some customizations.
   Qt, ...). Since the script requires full
   knowledge of all tools run by SCons, it will fail if it finds an unsupported tool. Feel free
   to send a patch with support for your favorite tools.
+- The script does not take into account environment variables etc. set from SCons, and
+  the ninja build will use the current environment instead.
 - Files that have dynamic content (i.e. content depending on other things than files, such as
-  `Value`s), they will not be regenerated automatically. This is a general problem with generator-based
+  `Value`s), will not be regenerated automatically. This is a general problem with generator-based
   build systems. Delete the file if you want it to be regenerated.
