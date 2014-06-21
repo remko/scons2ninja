@@ -51,3 +51,9 @@ to see some customizations.
 - Use the batching feature for SCons-generated files, when/if it is implemented in Ninja.
   This allows to build all SCons-generated files in one SCons invocation, saving SCons startup
   time for every file.
+
+## Other projects
+
+NaCl recently [added their own script](https://groups.google.com/forum/#!msg/native-client-dev/Ev06azGi7pI/2bGp2h_kY-UJ) for integrating Ninja with SCons. It plugs in directly into the SCons backend to get dependency information,
+which means it does not require full knowledge of all tools used in the build process. I will look into following
+a similar approach for scons2ninja, which would make it more generic and work better out of the box.
