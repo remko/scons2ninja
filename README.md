@@ -1,4 +1,4 @@
-# [scons2ninja: Generate Ninja build files for SCons](http://el-tramo.be/scons2ninja)
+# [scons2ninja: Generate Ninja build files for SCons](https://el-tramo.be/scons2ninja)
 
 ## About
 
